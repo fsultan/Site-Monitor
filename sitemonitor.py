@@ -3,16 +3,17 @@
 # sample usage: checksites.py eriwen.com nixtutor.com yoursite.org
 
 import pickle, os, sys, logging, time, urllib2, re
+import socket
 from optparse import OptionParser, OptionValueError
 from smtplib import SMTP
 from getpass import getuser
-from socket import gethostname
+#from socket import gethostname
 
 def generate_email_alerter(to_addrs, from_addr=None, use_gmail=False,
         username=None, password=None, hostname=None, port=25):
 
     if not from_addr:
-        from_addr = getuser() + "@" + gethostname()
+        from_addr = getuser() + "@" + socket.gethostname()
 
     if use_gmail:
         if username and password:
@@ -53,7 +54,7 @@ def get_headers(url):
     except:
         return 'Headers unavailable'
 
-def compare_site_status(prev_results, alerter):
+def compare_site_status(prev_results, alerter, critical_response_time=None):
     '''Report changed status based on previous results'''
 
     def is_status_changed(url):
@@ -62,7 +63,12 @@ def compare_site_status(prev_results, alerter):
         endTime = time.time()
         elapsedTime = endTime - startTime
         msg = "%s took %s" % (url,elapsedTime)
-        logging.info(msg)
+        if critical_response_time and elapsedTime > critical_response_time/1000.00:
+            logging.critical(msg)
+            #consider critical to be 'down', this should be made optional
+            status = 'down'
+        else:
+            logging.info(msg)
 
         friendly_status = '%s is %s' % (url, status)
         print friendly_status
@@ -135,6 +141,15 @@ def get_command_line_options():
 
     parser.add_option("-r","--alert-on-slow-response", action="store_true",
             help="Turn on alerts for response times")
+    
+    parser.add_option("--connection-timeout", dest="socket_timeout", 
+            type="int", default=10,
+            help="Set connection timeout. Default is 10 seconds.")
+    
+    parser.add_option("--critical-response-time", dest="critical_response_time", 
+            type="int",
+            help="Set maximum acceptable response time in milliseconds above \
+which a critical is logged.")
 
     parser.add_option("-g","--use-gmail", action="store_true", dest="use_gmail",
             help="Send email with Gmail.  Must also specify username and password")
@@ -183,6 +198,10 @@ def main():
 
     urls = map(normalize_url, urls)
 
+    critical_response_time = options.critical_response_time
+    
+    #set global timeout for urllib
+    socket.setdefaulttimeout(options.socket_timeout)
     # Change logging from WARNING to INFO when logResponseTime option is set
     # so we can log response times as well as status changes.
     if options.log_response_time:
@@ -210,7 +229,8 @@ def main():
 
     # Check sites only if Internet is_available
     if is_internet_reachable():
-        status_checker = compare_site_status(pickledata, alerter)
+        status_checker = compare_site_status(pickledata, alerter, 
+                                critical_response_time)
         map(status_checker, urls)
     else:
         logging.error('Either the world ended or we are not connected to the net.')
